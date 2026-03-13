@@ -133,6 +133,7 @@ Designed entirely on open-source, locally hosted infrastructure. The core defens
 
 | Resource | Link |
 |----------|------|
+| **Documentation** | [Project Documentation](https://docs.google.com/document/d/1MHEQ_RkncEVIH4k3HXd9yho2UVLJWKk16gAQ6VHsAUQ/edit?usp=sharing) |
 | **Live Demo Video** | Coming soon — Demo of the GenAI Trap working in action |
 
 ### Frameworks & Tools
