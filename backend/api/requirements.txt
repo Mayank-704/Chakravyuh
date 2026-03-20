@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+torch
+flwr
+docker
+kafka-python
