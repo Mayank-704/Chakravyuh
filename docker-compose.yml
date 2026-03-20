@@ -1,0 +1,12 @@
+services:
+  api:
+    build:
+      context: ./backend/api
+
+  honeypot:
+    build:
+      context: ./backend/honeypot
+
+  dashboard:
+    build:
+      context: ./dashboard
