@@ -478,6 +478,113 @@ app.add_middleware(
 # 5.  REST Endpoints
 # ---------------------------------------------------------------------------
 
+@app.post("/api/v1/alert", summary="Receive alert from ML detector")
+async def receive_alert(alert_data: Dict[str, Any]):
+    """
+    Receives an alert from the ML detector, deploys a trap, and broadcasts
+    the alert to the dashboard.
+    """
+    log.info(f"Received alert from ML detector: {alert_data}")
+
+    attacker_ip = alert_data.get("attacker_ip")
+    anomaly_score = alert_data.get("anomaly_score", 0.9)
+    severity = alert_data.get("severity", "high")
+
+    if not attacker_ip:
+        raise HTTPException(status_code=400, detail="Attacker IP not provided in alert")
+
+    # Deploy a trap
+    try:
+        # For now, we'll default to hospital, as the detector doesn't know the institution
+        session = trap_controller.deploy_trap(
+            attacker_ip=attacker_ip,
+            anomaly_score=anomaly_score,
+            institution_type="hospital"
+        )
+        log.info(f"Trap deployed for session {session.session_id}")
+    except Exception as e:
+        log.error(f"Failed to deploy trap: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to deploy trap")
+
+    # Broadcast the initial detection alert to the dashboard
+    global _alert_id_counter
+    _alert_id_counter += 1
+    
+    initial_alert = {
+        "id":           _alert_id_counter,
+        "severity":     severity.lower(),
+        "source_ip":    attacker_ip,
+        "target":       _institution_to_hostname("hospital"),
+        "attack_type":  "Anomaly Detected",
+        "description":  f"High anomaly score ({anomaly_score:.2f}) detected from {attacker_ip}. Deploying trap.",
+        "status":       "detected",
+        "timestamp":    datetime.now(timezone.utc).isoformat(),
+        "received_at":  datetime.now(timezone.utc).isoformat(),
+        "ttps":         [],
+        "session_id":   session.session_id,
+        "anomaly_score": anomaly_score,
+        "event_type":   "detection",
+    }
+    
+    alerts_data.insert(0, initial_alert)
+    ws_envelope = {
+        "type":    "new_alert",
+        "payload": initial_alert,
+    }
+    await manager.broadcast(ws_envelope)
+    
+    return {"status": "trap deployed", "session_id": session.session_id}
+
+
+@app.post("/api/v1/session/{session_id}/command", summary="Log an attacker command")
+async def log_attacker_command(session_id: str, command_data: Dict[str, Any]):
+    """
+    Logs a command sent by an attacker in a specific trap session.
+    This simulates the honeypot capturing a command.
+    """
+    command = command_data.get("command")
+    if not command:
+        raise HTTPException(status_code=400, detail="Command not provided")
+
+    session = trap_controller.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        # The anomaly score for a command can be fixed or dynamically calculated
+        # For the demo, we'll use a fixed high score for dangerous commands.
+        anomaly_score = 0.95 if "cat /etc/shadow" in command or "wget" in command else 0.8
+        
+        # log_command is now async
+        event = await trap_controller.log_command(
+            session_id=session_id,
+            command=command,
+            anomaly_score=anomaly_score
+        )
+        return {"status": "command logged", "event_id": event.event_id}
+    except Exception as e:
+        log.error(f"Failed to log command for session {session_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to log command")
+
+
+@app.post("/api/v1/session/{session_id}/end", summary="End a trap session")
+async def end_trap_session(session_id: str):
+    """
+    Ends a specific trap session, triggering teardown and reporting.
+    """
+    session = trap_controller.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        # teardown_trap is now async
+        await trap_controller.teardown_trap(session_id)
+        return {"status": "session ended and torn down"}
+    except Exception as e:
+        log.error(f"Failed to tear down session {session_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to tear down session")
+
+
 @app.get(
     "/api/stats",
     summary="Dashboard summary statistics",
