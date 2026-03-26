@@ -14,6 +14,7 @@ from datetime import datetime
 import threading
 from collections import deque
 import queue
+import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -86,7 +87,8 @@ class ThreatDetector:
         checkpoint_path: str,
         threshold_percentile: str = 'p95',
         alert_queue: Optional[queue.Queue] = None,
-        history_size: int = 1000
+        history_size: int = 1000,
+        api_url: str = "http://localhost:8000/api/v1/alert"
     ):
         """
         Initialize threat detector.
@@ -96,11 +98,13 @@ class ThreatDetector:
             threshold_percentile: Which percentile threshold to use (p90/p95/p99)
             alert_queue: Optional queue for alert events (for async processing)
             history_size: Size of flow history buffer
+            api_url: The URL for the API to send alerts to.
         """
         self.checkpoint_path = Path(checkpoint_path)
         self.threshold_percentile = threshold_percentile
         self.alert_queue = alert_queue if alert_queue else queue.Queue()
         self.history_size = history_size
+        self.api_url = api_url
         
         self.preprocessor = None
         self.autoencoder = None
@@ -218,7 +222,7 @@ class ThreatDetector:
             if not is_anomalous:
                 return None
             
-            severity = 'HIGH' if score > self.threshold * 2 else 'MEDIUM'
+            severity = 'CRITICAL' if score > self.threshold * 2 else 'HIGH'
             
             # Create alert
             flow_id = f"{flow_dict.get('src_ip', '?')}-{flow_dict.get('dst_ip', '?')}"
@@ -229,7 +233,17 @@ class ThreatDetector:
                 severity=severity,
                 flows_window=recent_flows
             )
-            
+
+            # Send alert to API
+            try:
+                alert_data = alert.to_dict()
+                # Add attacker_ip for the trap controller
+                alert_data['attacker_ip'] = flow_dict.get('src_ip')
+                requests.post(self.api_url, json=alert_data, timeout=5)
+                logger.info(f"Sent alert to API: {alert_data}")
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to send alert to API: {e}")
+
             # Store alert
             self.alerts.append(alert)
             
