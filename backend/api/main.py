@@ -39,6 +39,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from federated.trap_controller import TrapController
+
+# Initialize Trap Controller
+trap_controller = TrapController()
+
 # ---------------------------------------------------------------------------
 # aiokafka — graceful degradation when broker is absent
 # ---------------------------------------------------------------------------
@@ -496,11 +501,13 @@ async def receive_alert(alert_data: Dict[str, Any]):
     # Deploy a trap
     try:
         # For now, we'll default to hospital, as the detector doesn't know the institution
-        session = trap_controller.deploy_trap(
+        session_task = trap_controller.deploy_trap(
             attacker_ip=attacker_ip,
             anomaly_score=anomaly_score,
             institution_type="hospital"
         )
+        # Since deploy_trap is async, we need to await it.
+        session = await session_task
         log.info(f"Trap deployed for session {session.session_id}")
     except Exception as e:
         log.error(f"Failed to deploy trap: {e}", exc_info=True)

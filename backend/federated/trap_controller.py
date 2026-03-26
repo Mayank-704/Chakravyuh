@@ -43,6 +43,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Import directly from honeypot module
+from honeypot.server import extract_ttps, OllamaClient, _static_fallback
+
 # ---------------------------------------------------------------------------
 # Optional heavy imports — degrade gracefully when dependencies are absent
 # ---------------------------------------------------------------------------
@@ -274,7 +277,7 @@ INSTITUTION_PROFILES: Dict[str, Dict[str, Any]] = {
             "/root/.swift/swift_operator.key": (
                 "-----BEGIN RSA PRIVATE KEY-----\n"
                 "MIIEowIBAAKCAQEA2FAKE_SWIFT_KEY_FOR_HONEYPOT_SBI_PRODUCTION_DO_NOT_USE\n"
-                "kL9mNpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrSt\n"
+                "kL9mNpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIj\n"
                 "-----END RSA PRIVATE KEY-----\n"
             ),
         },
