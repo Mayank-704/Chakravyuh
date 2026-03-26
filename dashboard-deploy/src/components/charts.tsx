@@ -19,11 +19,11 @@ export function ThreatTimeline({ alerts }: { alerts: Alert[] }) {
     }, [] as { time: string; attacks: number }[]).sort((a, b) => a.time.localeCompare(b.time));
 
   return (
-    <div className="col-span-12 xl:col-span-4 flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl">
+    <div className="w-full flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl min-h-[320px]">
         <div className="px-5 py-4 border-b border-[#1E293B] bg-[#171f33]/50 flex justify-between items-center">
             <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Shield className="w-4 h-4 text-blue-400" />24-Hour Threat Timeline</h2>
         </div>
-        <div className="p-4 flex-1">
+        <div className="p-4 h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={timelineData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                     <defs>
@@ -55,11 +55,11 @@ export function AttackDistribution({ alerts }: { alerts: Alert[] }) {
     }, [] as { name: string; value: number }[]);
 
     return (
-        <div className="col-span-12 xl:col-span-4 flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl">
+        <div className="w-full flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl min-h-[320px]">
             <div className="px-5 py-4 border-b border-[#1E293B] bg-[#171f33]/50 flex justify-between items-center">
                 <h2 className="text-sm font-semibold text-white flex items-center gap-2"><PieChartIcon className="w-4 h-4 text-amber-400" />Attack Type Distribution</h2>
             </div>
-            <div className="p-4 flex-1">
+            <div className="p-4 h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                         <Pie data={distributionData} cx="50%" cy="50%" labelLine={false} outerRadius={80} fill="#8884d8" dataKey="value">
@@ -86,11 +86,11 @@ export function TopTargeted({ alerts }: { alerts: Alert[] }) {
     }, [] as { name: string; attacks: number }[]).sort((a, b) => b.attacks - a.attacks).slice(0, 5);
 
     return (
-        <div className="col-span-12 xl:col-span-4 flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl">
+        <div className="w-full flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl min-h-[320px]">
             <div className="px-5 py-4 border-b border-[#1E293B] bg-[#171f33]/50 flex justify-between items-center">
                 <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Target className="w-4 h-4 text-rose-400" />Top Targeted Institutions</h2>
             </div>
-            <div className="p-4 flex-1">
+            <div className="p-4 h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={targetedData} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                         <XAxis type="number" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />

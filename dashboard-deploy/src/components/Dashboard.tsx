@@ -1,5 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Shield, ShieldAlert, Network, Server, Terminal, Activity, Wifi } from 'lucide-react';
+import { MapContainer, GeoJSON, Marker, Popup, Polyline } from 'react-leaflet';
+import * as L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
 import type { Stats, Alert, FederatedStatus, Honeypot, ThreatMap } from '../types';
 import { ThreatTimeline, AttackDistribution, TopTargeted } from './charts';
@@ -8,12 +11,43 @@ import Ticker from './Ticker';
 const API_BASE_URL = 'http://localhost:8000/api';
 const WS_URL = 'ws://localhost:8000/ws/alerts';
 
+function StatCard({ title, value, icon, alert, trend }: { title: string, value: string | number, icon: React.ReactNode, alert?: boolean, trend?: string }) {
+  return (
+    <div className="bg-[#131A2A] border border-[#1E293B] p-5 rounded-2xl relative overflow-hidden group hover:border-[#334155] transition-colors">
+      {alert && <div className="absolute top-0 right-0 w-24 h-24 bg-rose-500/10 blur-2xl rounded-full -mr-12 -mt-12"></div>}
+      <div className="flex justify-between items-start mb-4">
+        <div className="p-2 bg-[#1E293B]/50 rounded-xl">{icon}</div>
+        {trend && <span className="text-xs font-semibold text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded-full">{trend}</span>}
+      </div>
+      <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">{title}</p>
+      <h3 className="text-3xl font-bold text-white tracking-tight">{value}</h3>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [nodes, setNodes] = useState<FederatedStatus[]>([]);
   const [honeypots, setHoneypots] = useState<Honeypot[]>([]);
   const [threatMap, setThreatMap] = useState<ThreatMap | null>(null);
+  const [selectedNode, setSelectedNode] = useState<any | null>(null);
+  const [indiaGeoJson, setIndiaGeoJson] = useState<any>(null);
+
+  const activeNodes = useMemo(() => {
+    if (!threatMap?.nodes) return [];
+    return threatMap.nodes.map(node => {
+      const affectingAlerts = alerts.filter(a => a.target === node.name || a.target === node.id || a.target.includes(node.name));
+      const latestAlert = affectingAlerts[0];
+      let currentStatus = node.status;
+      if (latestAlert && (latestAlert.severity === 'critical' || latestAlert.severity === 'high')) {
+        currentStatus = 'under_attack';
+      } else if (latestAlert && latestAlert.severity === 'medium') {
+        currentStatus = 'flagged';
+      }
+      return { ...node, status: currentStatus, latestAlert };
+    });
+  }, [threatMap, alerts]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -23,14 +57,18 @@ export default function Dashboard() {
           axios.get<Alert[]>(`${API_BASE_URL}/alerts`),
           axios.get<FederatedStatus[]>(`${API_BASE_URL}/federated/status`),
           axios.get<Honeypot[]>(`${API_BASE_URL}/honeypots`),
-          axios.get<ThreatMap>(`${API_BASE_URL}/threat-map`),
+          axios.get<ThreatMap>(`${API_BASE_URL}/threat-map`)
         ]);
-        
         setStats(statsRes.data);
         setAlerts(alertsRes.data);
         setNodes(nodesRes.data);
         setHoneypots(honeypotsRes.data);
         setThreatMap(threatMapRes.data);
+        
+        try {
+           const geoRes = await axios.get('/india.geojson');
+           setIndiaGeoJson(geoRes.data);
+        } catch(e) { console.error('Geojson failed:', e); }
 
       } catch (error) {
         console.error("Error fetching initial data: ", error);
@@ -51,8 +89,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-300 font-sans p-6 selection:bg-emerald-500/30">
-      
-      {/* HEADER: Clean, Professional, Minimal Logo styling */}
       <header className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -72,7 +108,6 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* OVERVIEW STATS: Clean modular cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <StatCard title="Total Alerts" value={stats?.alerts_total?.toLocaleString() || "0"} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
         <StatCard title="Critical Incidents" value={stats?.alerts_critical?.toLocaleString() || "0"} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
@@ -80,10 +115,7 @@ export default function Dashboard() {
         <StatCard title="Federated Nodes" value={stats?.nodes_online?.toString() || "0"} icon={<Network className="w-5 h-5 text-emerald-400" />} />
       </div>
 
-      {/* CORE DASHBOARD: 3-Column Layout */}
       <div className="grid grid-cols-12 gap-6 h-[580px] mb-8">
-        
-        {/* LEFT COLUMN: Threat Alerts Feed */}
         <div className="col-span-12 xl:col-span-3 flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl">
           <div className="px-5 py-4 border-b border-[#1E293B] bg-[#171f33]/50 flex justify-between items-center">
              <h2 className="text-sm font-semibold text-white">Auto-SOC Intelligence</h2>
@@ -105,71 +137,139 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* CENTER COLUMN: The Geo-Spatial Map */}
         <div className="col-span-12 xl:col-span-6 bg-[#131A2A] border border-[#1E293B] rounded-2xl relative overflow-hidden shadow-xl flex flex-col">
-          <div className="absolute top-5 left-5 z-10">
+          <div className="absolute top-5 left-5 z-[1000]">
              <h2 className="text-sm font-semibold text-white bg-[#131A2A]/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-[#1E293B]">Sovereign Defense Grid Map</h2>
           </div>
-          <div className="absolute bottom-5 left-5 z-10 flex gap-4 bg-[#131A2A]/80 backdrop-blur-md px-4 py-2 rounded-xl border border-[#1E293B]">
+          <div className="absolute bottom-5 left-5 z-[1000] flex gap-4 bg-[#131A2A]/80 backdrop-blur-md px-4 py-2 rounded-xl border border-[#1E293B]">
              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span><span className="text-xs font-semibold">Secure</span></div>
              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span><span className="text-xs font-semibold">Flagged</span></div>
              <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span><span className="text-xs font-semibold">Under Attack</span></div>
           </div>
           
-          <div className="flex-1 w-full relative" style={{ height: "500px", background: "linear-gradient(135deg, #0B0F19 0%, #0F1425 100%)" }}>
-            <svg width="100%" height="100%" style={{ background: "radial-gradient(circle at 30% 40%, rgba(16, 185, 129, 0.05) 0%, transparent 50%)" }}>
-              {/* Grid Background */}
-              <defs>
-                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" strokeWidth="0.5" opacity="0.3" />
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#grid)" />
-              
-              {/* India Border (Simplified SVG Path) */}
-              <g transform="translate(100, 50) scale(1.8, 1.8)">
-                <path d="M 68.2 8.3 L 97.3 7.9 L 97.2 25 L 101.9 32.5 L 97.6 35 L 101 40.2 L 95.1 44.5 L 94.3 50 L 88.9 52 L 88.1 59.5 L 82.7 60 L 73 68 L 67.8 65.5 L 68 58.5 L 61 56.5 L 60 52 L 55 51.5 L 52 48 L 48 47.5 L 47.5 42 L 43 40.5 L 42 35.5 L 38 34 L 37 28 L 33.5 27 L 32 20.5 L 28.5 18.5 L 29 14 L 33.5 12 L 36.5 8.5 L 40.5 7 L 45 5.5 L 50 6 L 55 4 L 60 3.5 L 65 4 Z" 
-                      fill="#1e293b" stroke="#0f7938" strokeWidth="1.2" opacity="0.6" />
-              </g>
-              
-              {/* Map Markers with Connections */}
-              {threatMap?.nodes.map((node) => {
+          <div className="flex-1 w-full relative leaflet-transparent-bg" style={{ height: "500px", minHeight: "500px", background: "#0B0F19" }}>
+            <MapContainer
+              center={[22, 80]}
+              zoom={4.5}
+              zoomControl={false}
+              style={{ width: '100%', height: '100%', background: 'transparent' }}
+              attributionControl={false}
+            >
+              {indiaGeoJson && (
+                <GeoJSON
+                  data={indiaGeoJson}
+                  style={{
+                    color: '#1E293B',
+                    weight: 1.5,
+                    fillColor: '#131A2A',
+                    fillOpacity: 1,
+                  }}
+                />
+              )}
+
+              {activeNodes?.map((node, i) => (
+                <Polyline 
+                  key={`line-${i}`} 
+                  positions={[[node.location[0], node.location[1]], [28.6139, 77.2090]]} 
+                  pathOptions={{ 
+                    color: node.status === 'under_attack' ? '#f43f5e' : node.status === 'online' ? '#10b981' : '#f59e0b',
+                    weight: 1.5,
+                    opacity: 0.5,
+                    dashArray: '4, 4'
+                  }} 
+                />
+              ))}
+
+              {activeNodes?.map((node) => {
                 const color = node.status === 'under_attack' ? '#f43f5e' : node.status === 'online' ? '#10b981' : '#f59e0b';
-                const x = (node.location[1] - 68) * 4.5 + 100;
-                const y = (32 - node.location[0]) * 4.5 + 50;
                 
+                const isPulsing = node.status === 'under_attack';
+                const htmlContent = `
+                  <div style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer;">
+                    ${isPulsing ? `<div style="position: absolute; width: 48px; height: 48px; border-radius: 50%; background: rgba(244, 63, 94, 0.2); animation: ping 1s infinite;"></div>` : ''}
+                    <div style="width: 12px; height: 12px; border-radius: 50%; border: 2px solid #131A2A; background-color: ${color}; z-index: 10;"></div>
+                    <div style="margin-top: 4px; display: flex; flex-direction: column; align-items: center; z-index: 10;">
+                      <span style="font-size: 10px; font-weight: bold; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5); white-space: nowrap;">${node.name}</span>
+                      <span style="font-size: 8px; color: #cbd5e1; text-shadow: 0 1px 1px rgba(0,0,0,0.3); white-space: nowrap;">${node.type}</span>
+                    </div>
+                  </div>
+                `;
+
+                const customMarkerIcon = L.divIcon({
+                  html: htmlContent,
+                  className: '',
+                  iconSize: [40, 40],
+                  iconAnchor: [20, 20]
+                });
+
                 return (
-                  <g key={node.id}>
-                    {/* Pulsing outer ring */}
-                    {node.status === 'under_attack' && (
-                      <circle cx={x} cy={y} r="15" fill={color} opacity="0.1" style={{ animation: "pulse 2s infinite" }} />
-                    )}
-                    {/* Connection line to center */}
-                    <line x1={x} y1={y} x2="200" y2="150" stroke={color} strokeWidth="0.8" opacity="0.2" strokeDasharray="2,2" />
-                    {/* Marker circle */}
-                    <circle cx={x} cy={y} r="5" fill={color} stroke="#1e293b" strokeWidth="1.5" />
-                    {/* Label */}
-                    <text x={x + 8} y={y - 5} fontSize="10" fontWeight="bold" fill="white" fontFamily="Inter, sans-serif">{node.name}</text>
-                    <text x={x + 8} y={y + 5} fontSize="9" fill="#94a3b8" fontFamily="Inter, sans-serif">{node.type}</text>
-                  </g>
+                  <Marker 
+                    key={node.id} 
+                    position={[node.location[0], node.location[1]]} 
+                    icon={customMarkerIcon}
+                    eventHandlers={{
+                      click: () => setSelectedNode({...node}),
+                    }}
+                  />
                 );
               })}
-              
-              {/* Central Hub */}
-              <circle cx="200" cy="150" r="8" fill="#10b981" stroke="#1e293b" strokeWidth="2" opacity="0.8" />
-              <circle cx="200" cy="150" r="3" fill="#ffffff" />
-            </svg>
-            
-            <style>{`
-              @keyframes pulse {
-                0%, 100% { opacity: 0.1; }
-                50% { opacity: 0.3; }
-              }
-            `}</style>
+
+              <Marker 
+                position={[28.6139, 77.2090]}
+                icon={L.divIcon({
+                  html: `
+                    <div style="position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer;">
+                      <div style="position: absolute; width: 32px; height: 32px; border-radius: 50%; background: rgba(16, 185, 129, 0.2); animation: pulse 2s infinite;"></div>
+                      <div style="width: 20px; height: 20px; border-radius: 50%; background: #10b981; border: 2px solid #131A2A; z-index: 10; display: flex; align-items: center; justify-content: center;">
+                        <div style="width: 8px; height: 8px; border-radius: 50%; background: white;"></div>
+                      </div>
+                      <div style="margin-top: 4px; z-index: 10;">
+                        <span style="font-size: 10px; font-weight: bold; color: #10b981; text-shadow: 0 1px 2px rgba(0,0,0,0.5); white-space: nowrap;">CERT-In Hub</span>
+                      </div>
+                    </div>
+                  `,
+                  className: '',
+                  iconSize: [40, 40],
+                  iconAnchor: [20, 20]
+                })}
+              />
+
+              {selectedNode && (
+                <Popup
+                  position={[selectedNode.location[0], selectedNode.location[1]]}
+                  offset={[0, -10]}
+                  eventHandlers={{
+                     remove: () => setSelectedNode(null),
+                  }}
+                  className="leaflet-custom-popup"
+                >
+                  <div className="bg-[#131A2A] border border-[#1E293B] shadow-2xl overflow-hidden rounded-xl w-[250px] !m-0 !p-0">
+                    <div className="p-3 border-b border-[#1E293B] bg-[#171f33]/80">
+                      <h3 className="text-white font-bold text-sm tracking-tight m-0 leading-none">{selectedNode.name}</h3>
+                      <p className="text-slate-400 text-[10px] uppercase font-bold tracking-wider mt-1 m-0 leading-none">{selectedNode.type}</p>
+                    </div>
+                    
+                    <div className="p-3">
+                      {selectedNode.latestAlert ? (
+                        <div className="bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                             <span className="text-rose-500 text-xs font-bold uppercase tracking-wider">Active Threat</span>
+                          </div>
+                          <p className="text-slate-300 text-xs leading-snug m-0">{selectedNode.latestAlert.description}</p>
+                        </div>
+                      ) : (
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex flex-col items-center justify-center py-4">
+                          <span className="text-emerald-500 text-xs font-bold uppercase tracking-wider">System Secure</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Popup>
+              )}
+            </MapContainer>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Honeypot Interactive Terminal */}
         <div className="col-span-12 xl:col-span-3 flex flex-col bg-[#131A2A] border border-[#1E293B] rounded-2xl overflow-hidden shadow-xl">
            <div className="h-12 bg-[#171f33] border-b border-[#1E293B] px-4 flex items-center justify-between">
               <div className="flex gap-2">
@@ -187,45 +287,26 @@ export default function Dashboard() {
                  Welcome to Ubuntu 22.04.2 LTS (GNU/Linux 5.15.0-76-generic x86_64)<br/>
                  Last login: {new Date().toUTCString().slice(0, -4)}
               </div>
-              
-              <div className="space-y-1">
-                {honeypots[0]?.commands_run > 0 && <div>...Honeypot log for {honeypots[0].name}...</div>}
-                <div className="flex gap-3 pt-1">
-                  <span className="text-slate-600 shrink-0 select-none">[{new Date().toLocaleTimeString('en-US', { hour12: false })}]</span>
-                  <span className="text-emerald-500 animate-pulse block w-2 h-4 bg-emerald-500/80"></span>
-                </div>
+              <div className="space-y-2">
+                 <div className="flex gap-2"><span className="text-emerald-500">root@honeypot-dmz:~#</span><span className="text-slate-300"> tail -f /var/log/auth.log</span></div>
+                 {alerts.slice(0,5).map((a, idx) => (
+                    <div key={idx} className={`${a.severity === 'critical' ? 'text-rose-400' : 'text-slate-400'}`}>
+                       [{new Date().toISOString()}] Failed password for root from {a.source_ip} port 22 ssh2
+                    </div>
+                 ))}
+                 <div className="flex gap-2"><span className="text-emerald-500 animate-pulse">_</span></div>
               </div>
            </div>
         </div>
-
       </div>
 
-        <div className="grid grid-cols-12 gap-6 h-[300px] mb-20">
-            <ThreatTimeline alerts={alerts} />
-            <AttackDistribution alerts={alerts} />
-            <TopTargeted alerts={alerts} />
-        </div>
-        <Ticker alerts={alerts} />
-    </div>
-  );
-}
-
-// Subcomponents
-
-function StatCard({ title, value, icon, trend, alert }: { title: string, value: string, icon: React.ReactNode, trend?: string, alert?: boolean }) {
-  return (
-    <div className={`bg-[#131A2A] border rounded-2xl p-5 flex flex-col justify-between shadow-lg relative overflow-hidden ${alert ? 'border-rose-500/30' : 'border-[#1E293B]'}`}>
-      {alert && <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 blur-3xl rounded-full translate-x-1/2 -translate-y-1/2"></div>}
-      <div className="flex items-start justify-between relative z-10">
-        <div className="bg-[#1e293b] p-2.5 rounded-xl border border-white/5">
-          {icon}
-        </div>
-        {trend && <span className="text-xs font-semibold text-slate-400 bg-slate-800 px-2 py-1 rounded-md">{trend}</span>}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+         <ThreatTimeline alerts={alerts} />
+         <AttackDistribution alerts={alerts} />
+         <TopTargeted alerts={alerts} />
       </div>
-      <div className="mt-4 relative z-10">
-        <h3 className={`text-3xl font-bold tracking-tight ${alert ? 'text-rose-100' : 'text-white'}`}>{value}</h3>
-        <p className="text-slate-400 text-sm font-medium mt-1">{title}</p>
-      </div>
+      
+      <Ticker alerts={alerts} />
     </div>
   );
 }
