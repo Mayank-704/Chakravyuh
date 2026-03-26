@@ -1,12 +1,8 @@
 export interface Stats {
     total_threats: number;
     critical_count: number;
-    honeypot_trapped_count: number;
+    active_sessions: number;
     federated_node_count: number;
-    alerts_total: number;
-    alerts_critical: number;
-    honeypots_active: number;
-    nodes_online: number;
 }
 
 export interface Alert {

@@ -602,11 +602,18 @@ async def get_stats() -> Dict[str, Any]:
     Returns live counters used in the Stats Row of the SOC Dashboard:
     - **total_threats**         — cumulative alert count
     - **critical_count**        — alerts with severity == critical
-    - **honeypot_trapped_count**— alerts that ended up in a trap container
+    - **active_sessions**       — currently running trap sessions
     - **federated_node_count**  — federated nodes that are currently online
-    - **auto_blocked_count**    — alerts auto-mitigated (status == blocked)
     """
-    critical_count        = sum(1 for a in alerts_data if a.get("severity") == "critical")
+    critical_count = sum(1 for a in alerts_data if a.get("severity") == "critical")
+    online_nodes = sum(1 for n in federated_status_data if n.get("status") == "online")
+    
+    return {
+        "total_threats": len(alerts_data),
+        "critical_count": critical_count,
+        "active_sessions": len(trap_controller.get_all_sessions()),
+        "federated_node_count": online_nodes,
+    }
     honeypot_trapped_count = sum(1 for a in alerts_data if a.get("status") == "trapped")
     auto_blocked_count    = sum(1 for a in alerts_data if a.get("status") == "blocked")
     federated_node_count  = sum(1 for n in federated_status_data if n.get("status") == "online")
