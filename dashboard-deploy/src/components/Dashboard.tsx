@@ -33,6 +33,7 @@ export default function Dashboard() {
   const [threatMap, setThreatMap] = useState<ThreatMap | null>(null);
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
   const [indiaGeoJson, setIndiaGeoJson] = useState<any>(null);
+  const [terminalLines, setTerminalLines] = useState<string[]>([]);
 
   const activeNodes = useMemo(() => {
     if (!threatMap?.nodes) return [];
@@ -49,40 +50,71 @@ export default function Dashboard() {
     });
   }, [threatMap, alerts]);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [statsRes, alertsRes, nodesRes, honeypotsRes, threatMapRes] = await Promise.all([
-          axios.get<Stats>(`${API_BASE_URL}/stats`),
-          axios.get<Alert[]>(`${API_BASE_URL}/alerts`),
-          axios.get<FederatedStatus[]>(`${API_BASE_URL}/federated/status`),
-          axios.get<Honeypot[]>(`${API_BASE_URL}/honeypots`),
-          axios.get<ThreatMap>(`${API_BASE_URL}/threat-map`)
-        ]);
-        setStats(statsRes.data);
-        setAlerts(alertsRes.data);
-        setNodes(nodesRes.data);
-        setHoneypots(honeypotsRes.data);
-        setThreatMap(threatMapRes.data);
-        
-        try {
-           const geoRes = await axios.get('/india.geojson');
-           setIndiaGeoJson(geoRes.data);
-        } catch(e) { console.error('Geojson failed:', e); }
+  const fetchData = async () => {
+    try {
+      const [statsRes, nodesRes, honeypotsRes, threatMapRes] = await Promise.all([
+        axios.get<Stats>(`${API_BASE_URL}/stats`),
+        axios.get<FederatedStatus[]>(`${API_BASE_URL}/federated/status`),
+        axios.get<Honeypot[]>(`${API_BASE_URL}/honeypots`),
+        axios.get<ThreatMap>(`${API_BASE_URL}/threat-map`)
+      ]);
+      setStats(statsRes.data);
+      setNodes(nodesRes.data);
+      setHoneypots(honeypotsRes.data);
+      setThreatMap(threatMapRes.data);
+    } catch (error) {
+      console.error("Error fetching data: ", error);
+    }
+  };
 
-      } catch (error) {
-        console.error("Error fetching initial data: ", error);
+  useEffect(() => {
+    // Initial data fetch
+    fetchData();
+    
+    // Fetch GeoJSON
+    axios.get('/india.geojson')
+      .then(res => setIndiaGeoJson(res.data))
+      .catch(e => console.error('Geojson failed:', e));
+
+    // Set up polling for stats
+    const intervalId = setInterval(fetchData, 5000); // Poll every 5 seconds
+
+    // Set up WebSocket
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+    };
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      
+      if (message.type === 'new_alert') {
+        const newAlert = message.payload;
+        setAlerts(prevAlerts => [newAlert, ...prevAlerts].slice(0, 100)); // Keep last 100
+        
+        if (newAlert.event_type === 'command' && newAlert.raw_command) {
+          const time = new Date(newAlert.timestamp).toLocaleTimeString();
+          const line = `[${time}] CMD: ${newAlert.raw_command} | TTPs: ${newAlert.ttps.join(', ') || 'N/A'} | IP: ${newAlert.source_ip}`;
+          setTerminalLines(prev => [...prev, line].slice(-10)); // Keep last 10 lines
+        }
+
+      } else if (message.type === 'backfill') {
+        setAlerts(message.payload);
       }
     };
-    fetchData();
 
-    const ws = new WebSocket(WS_URL);
-    ws.onmessage = (event) => {
-      const newAlert = JSON.parse(event.data);
-      setAlerts(prevAlerts => [newAlert, ...prevAlerts]);
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
     };
 
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    // Cleanup on component unmount
     return () => {
+      clearInterval(intervalId);
       ws.close();
     };
   }, []);
@@ -109,10 +141,10 @@ export default function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <StatCard title="Total Alerts" value={stats?.alerts_total?.toLocaleString() || "0"} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
-        <StatCard title="Critical Incidents" value={stats?.alerts_critical?.toLocaleString() || "0"} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
-        <StatCard title="Honeypots Active" value={stats?.honeypots_active?.toLocaleString() || "0"} icon={<Server className="w-5 h-5 text-amber-400" />} />
-        <StatCard title="Federated Nodes" value={stats?.nodes_online?.toString() || "0"} icon={<Network className="w-5 h-5 text-emerald-400" />} />
+        <StatCard title="Total Alerts" value={stats?.total_threats?.toLocaleString() || "0"} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
+        <StatCard title="Critical Incidents" value={stats?.critical_count?.toLocaleString() || "0"} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
+        <StatCard title="Honeypots Active" value={stats?.active_sessions?.toLocaleString() || "0"} icon={<Server className="w-5 h-5 text-amber-400" />} />
+        <StatCard title="Federated Nodes" value={stats?.federated_node_count?.toString() || "0"} icon={<Network className="w-5 h-5 text-emerald-400" />} />
       </div>
 
       <div className="grid grid-cols-12 gap-6 h-[580px] mb-8">
@@ -123,7 +155,7 @@ export default function Dashboard() {
           </div>
           <div className="p-4 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
             {alerts.map((alert, i) => (
-              <div key={i} className={`p-4 rounded-xl border leading-snug group transition-all duration-200 hover:bg-[#1e293b]/50 ${
+              <div key={alert.id || i} className={`p-4 rounded-xl border leading-snug group transition-all duration-200 hover:bg-[#1e293b]/50 ${
                 alert.severity === 'critical' ? 'border-rose-500/20 bg-rose-500/5' :
                 alert.severity === 'high' ? 'border-amber-500/20 bg-amber-500/5' : 'border-blue-500/20 bg-blue-500/5'
               }`}>
@@ -288,13 +320,10 @@ export default function Dashboard() {
                  Last login: {new Date().toUTCString().slice(0, -4)}
               </div>
               <div className="space-y-2">
-                 <div className="flex gap-2"><span className="text-emerald-500">root@honeypot-dmz:~#</span><span className="text-slate-300"> tail -f /var/log/auth.log</span></div>
-                 {alerts.slice(0,5).map((a, idx) => (
-                    <div key={idx} className={`${a.severity === 'critical' ? 'text-rose-400' : 'text-slate-400'}`}>
-                       [{new Date().toISOString()}] Failed password for root from {a.source_ip} port 22 ssh2
-                    </div>
-                 ))}
-                 <div className="flex gap-2"><span className="text-emerald-500 animate-pulse">_</span></div>
+                {terminalLines.map((line, i) => (
+                  <div key={i} className="text-slate-400">{line}</div>
+                ))}
+                <div className="flex gap-2"><span className="text-emerald-500 animate-pulse">_</span></div>
               </div>
            </div>
         </div>
