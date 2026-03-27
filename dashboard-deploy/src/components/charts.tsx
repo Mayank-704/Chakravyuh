@@ -34,7 +34,15 @@ export function ThreatTimeline({ alerts }: { alerts: Alert[] }) {
                     </defs>
                     <XAxis dataKey="time" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
                     <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
-                    <Tooltip contentStyle={{ backgroundColor: '#131A2A', border: '1px solid #1E293B' }} />
+                    <Tooltip
+                        contentStyle={{
+                            backgroundColor: 'var(--theme-surface-alt)',
+                            border: '2px solid var(--theme-border)',
+                            color: 'var(--theme-text-strong)',
+                        }}
+                        labelStyle={{ color: 'var(--theme-text-strong)', fontWeight: 700 }}
+                        itemStyle={{ color: 'var(--theme-text)' }}
+                    />
                     <Area type="monotone" dataKey="attacks" stroke="#8884d8" fillOpacity={1} fill="url(#colorUv)" />
                 </AreaChart>
             </ResponsiveContainer>
@@ -65,8 +73,16 @@ export function AttackDistribution({ alerts }: { alerts: Alert[] }) {
                         <Pie data={distributionData} cx="50%" cy="50%" labelLine={false} outerRadius={80} fill="#8884d8" dataKey="value">
                             {distributionData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                         </Pie>
-                        <Tooltip contentStyle={{ backgroundColor: '#131A2A', border: '1px solid #1E293B' }} />
-                        <Legend iconSize={10} layout="vertical" verticalAlign="middle" align="right" />
+                        <Tooltip
+                            contentStyle={{
+                                backgroundColor: 'var(--theme-surface-alt)',
+                                border: '2px solid var(--theme-border)',
+                                color: 'var(--theme-text-strong)',
+                            }}
+                            labelStyle={{ color: 'var(--theme-text-strong)', fontWeight: 700 }}
+                            itemStyle={{ color: 'var(--theme-text)' }}
+                        />
+                        <Legend iconSize={10} layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ color: 'var(--theme-text)' }} />
                     </PieChart>
                 </ResponsiveContainer>
             </div>
@@ -95,7 +111,15 @@ export function TopTargeted({ alerts }: { alerts: Alert[] }) {
                     <BarChart data={targetedData} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                         <XAxis type="number" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
                         <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
-                        <Tooltip contentStyle={{ backgroundColor: '#131A2A', border: '1px solid #1E293B' }} />
+                        <Tooltip
+                            contentStyle={{
+                                backgroundColor: 'var(--theme-surface-alt)',
+                                border: '2px solid var(--theme-border)',
+                                color: 'var(--theme-text-strong)',
+                            }}
+                            labelStyle={{ color: 'var(--theme-text-strong)', fontWeight: 700 }}
+                            itemStyle={{ color: 'var(--theme-text)' }}
+                        />
                         <Bar dataKey="attacks" fill="#8884d8" />
                     </BarChart>
                 </ResponsiveContainer>

@@ -33,7 +33,6 @@ export default function Dashboard() {
   const [threatMap, setThreatMap] = useState<ThreatMap | null>(null);
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
   const [indiaGeoJson, setIndiaGeoJson] = useState<any>(null);
-  const [terminalLines, setTerminalLines] = useState<string[]>([]);
 
   const activeNodes = useMemo(() => {
     if (!threatMap?.nodes) return [];
@@ -50,77 +49,107 @@ export default function Dashboard() {
     });
   }, [threatMap, alerts]);
 
-  const fetchData = async () => {
-    try {
-      const [statsRes, nodesRes, honeypotsRes, threatMapRes] = await Promise.all([
-        axios.get<Stats>(`${API_BASE_URL}/stats`),
-        axios.get<FederatedStatus[]>(`${API_BASE_URL}/federated/status`),
-        axios.get<Honeypot[]>(`${API_BASE_URL}/honeypots`),
-        axios.get<ThreatMap>(`${API_BASE_URL}/threat-map`)
-      ]);
-      setStats(statsRes.data);
-      setNodes(nodesRes.data);
-      setHoneypots(honeypotsRes.data);
-      setThreatMap(threatMapRes.data);
-    } catch (error) {
-      console.error("Error fetching data: ", error);
-    }
-  };
-
   useEffect(() => {
-    // Initial data fetch
-    fetchData();
-    
-    // Fetch GeoJSON
-    axios.get('/india.geojson')
-      .then(res => setIndiaGeoJson(res.data))
-      .catch(e => console.error('Geojson failed:', e));
-
-    // Set up polling for stats
-    const intervalId = setInterval(fetchData, 5000); // Poll every 5 seconds
-
-    // Set up WebSocket
-    const ws = new WebSocket(WS_URL);
-
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      
-      if (message.type === 'new_alert') {
-        const newAlert = message.payload;
-        setAlerts(prevAlerts => [newAlert, ...prevAlerts].slice(0, 100)); // Keep last 100
-        
-        if (newAlert.event_type === 'command' && newAlert.raw_command) {
-          const time = new Date(newAlert.timestamp).toLocaleTimeString();
-          const line = `[${time}] CMD: ${newAlert.raw_command} | TTPs: ${newAlert.ttps.join(', ') || 'N/A'} | IP: ${newAlert.source_ip}`;
-          setTerminalLines(prev => [...prev, line].slice(-10)); // Keep last 10 lines
-        }
-
-      } else if (message.type === 'backfill') {
-        setAlerts(message.payload);
+    const fetchGeoJson = async () => {
+      try {
+        const geoRes = await axios.get('/india.geojson');
+        setIndiaGeoJson(geoRes.data);
+      } catch (e) {
+        console.error('Geojson failed:', e);
       }
     };
 
-    ws.onclose = () => {
-      console.log('WebSocket disconnected');
+    fetchGeoJson();
+  }, []);
+
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let pollTimer: number | null = null;
+    let isUnmounted = false;
+
+    const fetchData = async () => {
+      try {
+        const [statsRes, alertsRes, nodesRes, honeypotsRes, threatMapRes] = await Promise.all([
+          axios.get<Stats>(`${API_BASE_URL}/stats`),
+          axios.get<Alert[]>(`${API_BASE_URL}/alerts`),
+          axios.get<FederatedStatus[]>(`${API_BASE_URL}/federated/status`),
+          axios.get<Honeypot[]>(`${API_BASE_URL}/honeypots`),
+          axios.get<ThreatMap>(`${API_BASE_URL}/threat-map`)
+        ]);
+
+        if (isUnmounted) return;
+
+        setStats(statsRes.data);
+        setAlerts(alertsRes.data);
+        setNodes(nodesRes.data);
+        setHoneypots(honeypotsRes.data);
+        setThreatMap(threatMapRes.data);
+      } catch (error) {
+        console.error('Error fetching live dashboard data:', error);
+      }
     };
 
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
+    const scheduleReconnect = () => {
+      if (isUnmounted || reconnectTimer !== null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connectWebSocket();
+      }, 2000);
     };
 
-    // Cleanup on component unmount
+    const connectWebSocket = () => {
+      if (isUnmounted) return;
+
+      ws = new WebSocket(WS_URL);
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          if (message?.type === 'backfill' && Array.isArray(message.payload)) {
+            setAlerts(message.payload);
+          } else if (message?.type === 'new_alert' && message.payload) {
+            setAlerts((prevAlerts) => [
+              message.payload,
+              ...prevAlerts.filter((a) => a.id !== message.payload.id),
+            ]);
+          }
+
+          // Keep all cards/charts/map in sync with backend state.
+          void fetchData();
+        } catch (e) {
+          console.error('WebSocket parse error:', e);
+        }
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
+
+      ws.onclose = () => {
+        scheduleReconnect();
+      };
+    };
+
+    void fetchData();
+    connectWebSocket();
+
+    // Poll fallback if WS stalls; keeps demo responsive after network hiccups.
+    pollTimer = window.setInterval(() => {
+      void fetchData();
+    }, 15000);
+
     return () => {
-      clearInterval(intervalId);
-      ws.close();
+      isUnmounted = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (pollTimer !== null) window.clearInterval(pollTimer);
+      ws?.close();
     };
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0B0F19] text-slate-300 font-sans p-6 selection:bg-emerald-500/30">
+    <div className="dashboard-root min-h-screen bg-[#0B0F19] text-slate-300 font-sans p-6 selection:bg-emerald-500/30">
       <header className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -131,7 +160,7 @@ export default function Dashboard() {
             <p className="text-sm font-medium text-slate-400">Autonomous Cyber Defense Grid Center</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-full">
+        <div className="live-status-pill flex items-center gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-full">
           <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -141,10 +170,10 @@ export default function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <StatCard title="Total Alerts" value={stats?.total_threats?.toLocaleString() || "0"} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
-        <StatCard title="Critical Incidents" value={stats?.critical_count?.toLocaleString() || "0"} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
-        <StatCard title="Honeypots Active" value={stats?.active_sessions?.toLocaleString() || "0"} icon={<Server className="w-5 h-5 text-amber-400" />} />
-        <StatCard title="Federated Nodes" value={stats?.federated_node_count?.toString() || "0"} icon={<Network className="w-5 h-5 text-emerald-400" />} />
+        <StatCard title="Total Alerts" value={(stats?.alerts_total ?? stats?.total_threats ?? 0).toLocaleString()} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
+        <StatCard title="Critical Incidents" value={(stats?.alerts_critical ?? stats?.critical_count ?? 0).toLocaleString()} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
+        <StatCard title="Honeypots Active" value={(stats?.honeypots_active ?? stats?.active_sessions ?? stats?.honeypot_trapped_count ?? 0).toLocaleString()} icon={<Server className="w-5 h-5 text-amber-400" />} />
+        <StatCard title="Federated Nodes" value={(stats?.nodes_online ?? stats?.federated_node_count ?? 0).toString()} icon={<Network className="w-5 h-5 text-emerald-400" />} />
       </div>
 
       <div className="grid grid-cols-12 gap-6 h-[580px] mb-8">
@@ -155,7 +184,7 @@ export default function Dashboard() {
           </div>
           <div className="p-4 flex-1 overflow-y-auto space-y-3 custom-scrollbar">
             {alerts.map((alert, i) => (
-              <div key={alert.id || i} className={`p-4 rounded-xl border leading-snug group transition-all duration-200 hover:bg-[#1e293b]/50 ${
+              <div key={i} className={`p-4 rounded-xl border leading-snug group transition-all duration-200 hover:bg-[#1e293b]/50 ${
                 alert.severity === 'critical' ? 'border-rose-500/20 bg-rose-500/5' :
                 alert.severity === 'high' ? 'border-amber-500/20 bg-amber-500/5' : 'border-blue-500/20 bg-blue-500/5'
               }`}>
@@ -320,10 +349,13 @@ export default function Dashboard() {
                  Last login: {new Date().toUTCString().slice(0, -4)}
               </div>
               <div className="space-y-2">
-                {terminalLines.map((line, i) => (
-                  <div key={i} className="text-slate-400">{line}</div>
-                ))}
-                <div className="flex gap-2"><span className="text-emerald-500 animate-pulse">_</span></div>
+                 <div className="flex gap-2"><span className="text-emerald-500">root@honeypot-dmz:~#</span><span className="text-slate-300"> tail -f /var/log/auth.log</span></div>
+                 {alerts.slice(0,5).map((a, idx) => (
+                    <div key={idx} className={`${a.severity === 'critical' ? 'text-rose-400' : 'text-slate-400'}`}>
+                       [{new Date().toISOString()}] Failed password for root from {a.source_ip} port 22 ssh2
+                    </div>
+                 ))}
+                 <div className="flex gap-2"><span className="text-emerald-500 animate-pulse">_</span></div>
               </div>
            </div>
         </div>
