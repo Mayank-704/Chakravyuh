@@ -170,10 +170,10 @@ export default function Dashboard() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <StatCard title="Total Alerts" value={(stats?.alerts_total ?? stats?.total_threats ?? 0).toLocaleString()} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
-        <StatCard title="Critical Incidents" value={(stats?.alerts_critical ?? stats?.critical_count ?? 0).toLocaleString()} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
-        <StatCard title="Honeypots Active" value={(stats?.honeypots_active ?? stats?.active_sessions ?? stats?.honeypot_trapped_count ?? 0).toLocaleString()} icon={<Server className="w-5 h-5 text-amber-400" />} />
-        <StatCard title="Federated Nodes" value={(stats?.nodes_online ?? stats?.federated_node_count ?? 0).toString()} icon={<Network className="w-5 h-5 text-emerald-400" />} />
+        <StatCard title="Total Alerts" value={(stats?.alerts_total ?? 0).toLocaleString()} icon={<Activity className="w-5 h-5 text-blue-400" />} trend="+12% today" />
+        <StatCard title="Critical Incidents" value={(stats?.alerts_critical ?? 0).toLocaleString()} icon={<ShieldAlert className="w-5 h-5 text-rose-400" />} alert />
+        <StatCard title="Honeypots Active" value={(stats?.honeypots_active ?? 0).toLocaleString()} icon={<Server className="w-5 h-5 text-amber-400" />} />
+        <StatCard title="Federated Nodes" value={(stats?.nodes_online ?? 0).toString()} icon={<Network className="w-5 h-5 text-emerald-400" />} />
       </div>
 
       <div className="grid grid-cols-12 gap-6 h-[580px] mb-8">

@@ -187,14 +187,18 @@ class ConnectionManager:
         self._lock = asyncio.Lock()
 
     async def connect(self, websocket: WebSocket) -> None:
+        """
+        Register a new client and send them the entire current alert history.
+        """
         await websocket.accept()
-        async with self._lock:
-            self.active_connections.append(websocket)
-        log.info(
-            "WebSocket client connected — total=%d  remote=%s",
-            len(self.active_connections),
-            websocket.client,
-        )
+        self.active_connections.append(websocket)
+        log.info(f"Accepted new client: {websocket.client.host}")
+
+        # Send a backfill of existing data so the UI populates instantly
+        await websocket.send_json({
+            "type": "backfill",
+            "payload": alerts_data,
+        })
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
@@ -599,32 +603,21 @@ async def end_trap_session(session_id: str):
 )
 async def get_stats() -> Dict[str, Any]:
     """
-    Returns live counters used in the Stats Row of the SOC Dashboard:
-    - **total_threats**         — cumulative alert count
-    - **critical_count**        — alerts with severity == critical
-    - **active_sessions**       — currently running trap sessions
-    - **federated_node_count**  — federated nodes that are currently online
+    Return a dictionary of summary statistics for the main dashboard display.
     """
-    critical_count = sum(1 for a in alerts_data if a.get("severity") == "critical")
-    online_nodes = sum(1 for n in federated_status_data if n.get("status") == "online")
-    
-    return {
-        "total_threats": len(alerts_data),
-        "critical_count": critical_count,
-        "active_sessions": len(trap_controller.get_all_sessions()),
-        "federated_node_count": online_nodes,
-    }
-    honeypot_trapped_count = sum(1 for a in alerts_data if a.get("status") == "trapped")
-    auto_blocked_count    = sum(1 for a in alerts_data if a.get("status") == "blocked")
-    federated_node_count  = sum(1 for n in federated_status_data if n.get("status") == "online")
+    alerts_critical = sum(1 for a in alerts_data if a["severity"] == "critical")
+    nodes_online = sum(1 for n in federated_status_data if n["status"] == "online")
 
     return {
-        "total_threats":          len(alerts_data),
-        "critical_count":         critical_count,
-        "honeypot_trapped_count": honeypot_trapped_count,
-        "auto_blocked_count":     auto_blocked_count,
-        "federated_node_count":   federated_node_count,
-        "active_sessions":        len(honeypots_data),
+        "alerts_total": len(alerts_data),
+        "alerts_critical": alerts_critical,
+        "honeypots_active": len(honeypots_data),
+        "nodes_online": nodes_online,
+        "federated_node_count": len(federated_status_data),
+        "total_threats": len(alerts_data),
+        "critical_count": alerts_critical,
+        "active_sessions": len(honeypots_data),
+        "honeypot_trapped_count": sum(1 for h in honeypots_data if h.get("attacker_ip"))
     }
 
 
