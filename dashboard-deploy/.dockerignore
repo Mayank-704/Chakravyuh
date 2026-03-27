@@ -1,0 +1,18 @@
+# Ignore node_modules, it's a very large directory
+node_modules/
+
+# Ignore build output directory
+dist/
+
+# Ignore local development files
+.env
+.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore common system and editor files
+.DS_Store
+Thumbs.db
+.git
+.idea

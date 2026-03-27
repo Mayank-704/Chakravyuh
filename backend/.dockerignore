@@ -1,0 +1,22 @@
+# Ignore Python virtual environments
+venv/
+*.venv/
+.venv/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore test files and reports if not needed in production
+test_*.py
+trap_reports/
+
+# Ignore federated learning simulation data and configurations
+federated/fake_data/
+federated/test_federated.py
+
+# Ignore other large directories if they exist
+.git
+.idea

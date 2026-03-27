@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   api:
     build:
@@ -8,10 +6,37 @@ services:
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
+      # Mount docker sock to allow API to spawn trap containers
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8000:8000"
     networks:
       - chakravyuh-net
+    # Add environment variables for Kafka, Ollama if they are in other containers
+    # environment:
+    #   - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    #   - OLLAMA_API_BASE_URL=http://ollama:11434
+
+  ml_detector:
+    build: ./backend/ml_detector
+    # CRITICAL: These settings grant the container necessary permissions
+    # to monitor the host's network traffic.
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+    # This allows the container to resolve 'host.docker.internal' to the host's IP
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # IMPORTANT: You must change these values to match your server's setup
+      - HOST_SERVER_IP=192.168.1.106 # <-- CHANGE THIS to your server's local IP
+      - NETWORK_INTERFACE=eth0       # <-- CHANGE THIS to your server's network interface (e.g., en0, Wi-Fi)
+      # Use the special DNS name to reliably connect to the API on the host
+      - API_URL=http://host.docker.internal:8000/api/v1
+    depends_on:
+      - api
 
   honeypot:
     build:
@@ -21,13 +46,16 @@ services:
 
   dashboard:
     build:
-      context: ./dashboard
+      context: ./dashboard-deploy
     ports:
-      - "8501:8501"
+      - "5173:80" # Map host port 5173 to container's Nginx port 80
     networks:
       - chakravyuh-net
+    depends_on:
+      - api
 
 networks:
   chakravyuh-net:
     driver: bridge
+
 
